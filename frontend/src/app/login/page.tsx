@@ -19,7 +19,11 @@ export default function LoginPage() {
     e.preventDefault();
     setError(''); // 清除之前的错误信息
     try {
-      const response = await api.post('/token', new URLSearchParams({ username, password }));
+      const response = await api.post('/token', new URLSearchParams({ username, password }), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
       const { access_token } = response.data;
       await login(access_token);
       router.push('/dashboard'); // 登录成功后跳转到仪表盘或主页

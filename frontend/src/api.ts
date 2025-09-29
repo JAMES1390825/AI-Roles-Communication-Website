@@ -37,4 +37,26 @@ api.interceptors.response.use(
   }
 );
 
+export const transcribeAudio = async (audioBlob: Blob) => {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.webm'); // 文件名可以自定义
+  const response = await api.post('/audio/transcribe', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data.transcript;
+};
+
+export const speakText = async (text: string) => {
+  const response = await api.post('/audio/speak', { input_text: text }, {
+    responseType: 'blob', // 期望后端返回的是二进制数据
+  });
+  return response.data; // 返回 Blob 数据
+};
+
+export const deleteChats = async (chatIds: string[]) => {
+  await api.delete('/chats/bulk', { data: { chat_ids: chatIds } });
+};
+
 export default api;

@@ -82,3 +82,9 @@ class ChatResponse(ChatBase):
 
     class Config:
         from_attributes = True
+
+class TTSRequest(BaseModel):
+    input_text: str = Field(..., min_length=1, max_length=2000) # 文本转语音的输入文本
+
+class ChatDeleteBulkRequest(BaseModel):
+    chat_ids: List[uuid.UUID] = Field(..., min_length=1)

@@ -43,7 +43,7 @@ class Chat(Base):
 
     user = relationship("User", back_populates="chats")
     role = relationship("Role", back_populates="chats")
-    messages = relationship("Message", back_populates="chat", order_by="Message.order_in_chat")
+    messages = relationship("Message", back_populates="chat", order_by="Message.order_in_chat", cascade="all, delete-orphan")
 
 class Message(Base):
     __tablename__ = "messages"
