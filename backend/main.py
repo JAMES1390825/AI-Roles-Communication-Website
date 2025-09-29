@@ -8,6 +8,10 @@ from datetime import timedelta
 from typing import List
 import uuid
 from app import models, schemas, auth, llm_service # 导入 llm_service
+from fastapi import UploadFile, File, Response
+from fastapi.responses import StreamingResponse
+import io
+from fastapi.middleware.cors import CORSMiddleware # 导入 CORSMiddleware
 
 # 定义 OpenAPI tags metadata，用于组织 Swagger UI
 tags_metadata = [
@@ -26,6 +30,10 @@ tags_metadata = [
     {
         "name": "Chats",
         "description": "Manage user chat sessions and messages.",
+    },
+    {
+        "name": "Audio", # 新增 Audio Tag
+        "description": "Operations related to Audio (ASR and TTS).",
     },
 ]
 
@@ -47,6 +55,19 @@ app = FastAPI(
     # components={"securitySchemes": security_definitions}, # 移除全局安全定义，因为它应该在 Fast API 实例中
     # security=[{"BearerAuth": []}] # 移除全局安全设置
     # swagger_ui_oauth2_redirect_url="/oauth2-redirect" # 移除此行
+)
+
+origins = [
+    "http://localhost:3000",  # 允许前端应用访问的域名
+    "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 创建所有数据库表
@@ -219,7 +240,7 @@ async def send_message(chat_id: uuid.UUID, message: schemas.MessageCreate, db: S
         chat_history=llm_chat_history, # 传递所有历史消息
         user_message=message.content,
         few_shot_examples=role.few_shot_examples,
-        model="qwen3-235b-a22b-thinking-2507" # 确保使用正确的模型ID
+        model="deepseek-v3" # 确保使用正确的模型ID
     )
     # --- LLM 调用结束 ---
 
@@ -235,3 +256,58 @@ async def send_message(chat_id: uuid.UUID, message: schemas.MessageCreate, db: S
     db.refresh(db_ai_message)
 
     return db_ai_message
+
+@app.delete("/chats/bulk", status_code=status.HTTP_204_NO_CONTENT, tags=["Chats"], dependencies=[Depends(auth.get_current_active_user)])
+def delete_chats_bulk(chat_delete_request: schemas.ChatDeleteBulkRequest, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    try:
+        # 过滤掉不属于当前用户的聊天ID，防止越权删除
+        chats_to_delete = db.query(models.Chat).filter(
+            models.Chat.id.in_(chat_delete_request.chat_ids),
+            models.Chat.user_id == current_user.id
+        ).all()
+
+        if not chats_to_delete:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No chats found for deletion or unauthorized")
+
+        for chat in chats_to_delete:
+            db.delete(chat)
+        db.commit()
+
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as e:
+        print(f"Error during bulk chat deletion: {e}") # 打印详细错误信息
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error during bulk deletion: {e}")
+
+# --- 语音相关的 API 路由 ---
+
+@app.post("/audio/transcribe", tags=["Audio"], dependencies=[Depends(auth.get_current_active_user)])
+async def transcribe_audio(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    if not file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only audio files are allowed")
+
+    # 将上传的文件保存到临时位置，或者直接传递文件内容（如果 API 支持）
+    # 这里为了简化，我们假设llm_service可以处理文件路径或字节流
+    # 实际上，你可能需要将文件保存到临时文件，然后将路径传递给llm_service
+    # 或者llm_service可以直接接收BytesIO对象
+
+    # 为了演示，我们将文件内容读取到内存中，然后假装它是一个文件路径
+    # 在生产环境中，建议使用 tempfile 模块创建临时文件
+    audio_content = await file.read()
+    # For `client.audio.transcriptions.create` to work with `file`, 
+    # we need to pass a file-like object directly.
+    # We'll create a BytesIO object to simulate an in-memory file.
+    audio_file_like = io.BytesIO(audio_content)
+    audio_file_like.name = file.filename # Add a name attribute for the API
+    
+    transcript_text = await llm_service.get_asr_transcript(audio_file_like) # 传递文件对象
+    
+    return {"transcript": transcript_text}
+
+@app.post("/audio/speak", tags=["Audio"], dependencies=[Depends(auth.get_current_active_user)])
+async def speak_text(text: schemas.TTSRequest, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_active_user)):
+    audio_content = await llm_service.get_tts_audio(text.input_text)
+    
+    if not audio_content:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate audio")
+    
+    return StreamingResponse(io.BytesIO(audio_content), media_type="audio/mpeg") # 返回 mp3 格式的音频流
